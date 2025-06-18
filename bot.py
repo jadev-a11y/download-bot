@@ -85,15 +85,13 @@ stats = {
     'failed_downloads': 0
 }
 
-# Поддерживаемые платформы
+# Поддерживаемые платформы (убираем проблемные)
 SUPPORTED_PLATFORMS = {
     'youtube.com': '🔴 YouTube',
     'youtu.be': '🔴 YouTube',
     'tiktok.com': '🎵 TikTok',
     'vm.tiktok.com': '🎵 TikTok',
     'instagram.com': '📸 Instagram',
-    'pinterest.com': '📌 Pinterest',
-    'pin.it': '📌 Pinterest',
     'twitter.com': '🐦 Twitter',
     'x.com': '🐦 X (Twitter)',
     'facebook.com': '📘 Facebook',
@@ -143,7 +141,6 @@ def start_command(message):
 • 🔴 YouTube & YouTube Shorts
 • 🎵 TikTok 
 • 📸 Instagram (Reels & Videos)
-• 📌 Pinterest
 • 🐦 Twitter/X
 • 📘 Facebook
 
@@ -290,6 +287,23 @@ def download_video(url, chat_id, message_id=None):
             'extract_flat': False,
             'no_warnings': True,
             'ignoreerrors': False,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'referer': 'https://www.google.com/',
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls'],
+                    'player_skip': ['js', 'configs']
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip,deflate',
+                'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+                'Keep-Alive': '300',
+                'Connection': 'keep-alive',
+            }
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -299,12 +313,19 @@ def download_video(url, chat_id, message_id=None):
             try:
                 info = ydl.extract_info(url, download=False)
             except Exception as e:
-                if "Private video" in str(e) or "private" in str(e).lower():
-                    bot.edit_message_text("❌ Видео приватное или недоступно", chat_id, processing_msg.message_id)
-                elif "unavailable" in str(e).lower():
+                error_msg = str(e).lower()
+                if "private" in error_msg or "forbidden" in error_msg:
+                    bot.edit_message_text("❌ Видео приватное или заблокировано", chat_id, processing_msg.message_id)
+                elif "sign in" in error_msg or "bot" in error_msg:
+                    bot.edit_message_text("❌ Платформа требует авторизацию. Попробуйте другую ссылку", chat_id, processing_msg.message_id)
+                elif "unavailable" in error_msg or "not found" in error_msg:
                     bot.edit_message_text("❌ Видео недоступно или удалено", chat_id, processing_msg.message_id)
+                elif "geo" in error_msg or "country" in error_msg:
+                    bot.edit_message_text("❌ Видео недоступно в вашем регионе", chat_id, processing_msg.message_id)
+                elif "age" in error_msg:
+                    bot.edit_message_text("❌ Видео имеет возрастные ограничения", chat_id, processing_msg.message_id)
                 else:
-                    bot.edit_message_text(f"❌ Ошибка получения информации: {str(e)[:100]}...", chat_id, processing_msg.message_id)
+                    bot.edit_message_text(f"❌ Ошибка: {str(e)[:80]}...", chat_id, processing_msg.message_id)
                 stats['failed_downloads'] += 1
                 return
             
