@@ -1,15 +1,17 @@
 import os
 import telebot
 from telebot import types
-import yt_dlp
-import tempfile
+import qrcode
+from PIL import Image, ImageDraw, ImageFont
+import io
 import logging
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import time
-import re
-from urllib.parse import urlparse
-import shutil
+import tempfile
+from pyzbar import pyzbar
+import cv2
+import numpy as np
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +29,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Video Downloader Bot</title>
+                <title>QR Code Generator Bot</title>
                 <meta charset="UTF-8">
                 <style>
                     body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #1a1a1a; color: white; }
@@ -35,8 +37,9 @@ class HealthHandler(BaseHTTPRequestHandler):
                 </style>
             </head>
             <body>
-                <h1>🎬 Video Downloader Bot</h1>
+                <h1>📱 QR Code Generator Bot</h1>
                 <p>✅ Online and Ready</p>
+                <p>🔧 Generate QR codes instantly</p>
                 <p>👨‍💻 Developer: @oxygw</p>
             </body>
             </html>
@@ -73,178 +76,284 @@ if not BOT_TOKEN:
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # Статистика
-stats = {'total': 0, 'success': 0, 'failed': 0}
-
-# Поддерживаемые платформы
-PLATFORMS = {
-    'youtube.com': '🔴 YouTube',
-    'youtu.be': '🔴 YouTube',
-    'tiktok.com': '🎵 TikTok',
-    'vm.tiktok.com': '🎵 TikTok',
-    'instagram.com': '📸 Instagram',
-    'twitter.com': '🐦 Twitter',
-    'x.com': '🐦 X'
+stats = {
+    'qr_generated': 0,
+    'qr_scanned': 0,
+    'total_users': set()
 }
 
-def detect_platform(url):
-    """Определяет платформу"""
-    for domain, platform in PLATFORMS.items():
-        if domain in url.lower():
-            return platform
-    return None
+# Хранилище настроек пользователей
+user_settings = {}
 
-def is_valid_url(url):
-    """Проверяет URL"""
+def create_main_menu():
+    """Создает главное меню"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    btn1 = types.InlineKeyboardButton("📱 Создать QR код", callback_data="create_qr")
+    btn2 = types.InlineKeyboardButton("🔍 Сканировать QR", callback_data="scan_info")
+    btn3 = types.InlineKeyboardButton("⚙️ Размер QR", callback_data="settings")
+    btn4 = types.InlineKeyboardButton("📊 Статистика", callback_data="stats")
+    btn5 = types.InlineKeyboardButton("❓ Помощь", callback_data="help")
+    
+    markup.add(btn1, btn2)
+    markup.add(btn3, btn4)
+    markup.add(btn5)
+    
+    return markup
+
+def create_size_menu(user_id):
+    """Создает меню выбора размера"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    current_size = user_settings.get(user_id, {}).get('size', 300)
+    
+    sizes = [200, 300, 400, 600]
+    for size in sizes:
+        text = f"{'✅ ' if size == current_size else ''}{size}x{size}"
+        markup.add(types.InlineKeyboardButton(text, callback_data=f"size_{size}"))
+    
+    back_btn = types.InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")
+    markup.add(back_btn)
+    
+    return markup
+
+def create_back_menu():
+    """Создает кнопку назад"""
+    markup = types.InlineKeyboardMarkup()
+    back_btn = types.InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")
+    markup.add(back_btn)
+    return markup
+
+def generate_qr_code(text, size=300):
+    """Генерирует QR код"""
     try:
-        result = urlparse(url)
-        return all([result.scheme, result.netloc])
-    except:
-        return False
+        # Создаем QR код
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(text)
+        qr.make(fit=True)
+        
+        # Создаем изображение
+        qr_img = qr.make_image(fill_color="black", back_color="white")
+        
+        # Изменяем размер
+        qr_img = qr_img.resize((size, size), Image.Resampling.LANCZOS)
+        
+        # Сохраняем в байты
+        img_buffer = io.BytesIO()
+        qr_img.save(img_buffer, format='PNG')
+        img_buffer.seek(0)
+        
+        return img_buffer
+    except Exception as e:
+        logger.error(f"QR generation error: {e}")
+        return None
 
-def safe_send_message(chat_id, text, reply_markup=None, parse_mode='Markdown'):
-    """Безопасная отправка сообщения с retry"""
-    for attempt in range(3):
-        try:
-            return bot.send_message(chat_id, text, reply_markup=reply_markup, parse_mode=parse_mode)
-        except Exception as e:
-            if "too many requests" in str(e).lower():
-                time.sleep(2 ** attempt)
-                continue
-            elif attempt == 2:
-                try:
-                    return bot.send_message(chat_id, "❌ Ошибка отправки сообщения")
-                except:
-                    pass
-            break
-    return None
-
-def safe_edit_message(chat_id, message_id, text, reply_markup=None, parse_mode='Markdown'):
-    """Безопасное редактирование сообщения"""
-    for attempt in range(3):
-        try:
-            return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup, parse_mode=parse_mode)
-        except Exception as e:
-            if "too many requests" in str(e).lower():
-                time.sleep(2 ** attempt)
-                continue
-            elif "message is not modified" in str(e).lower():
-                return True
-            elif attempt == 2:
-                return None
-            break
-    return None
+def scan_qr_code(image_bytes):
+    """Сканирует QR код из изображения"""
+    try:
+        # Конвертируем bytes в numpy array
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        # Сканируем QR коды
+        decoded_objects = pyzbar.decode(image)
+        
+        if decoded_objects:
+            results = []
+            for obj in decoded_objects:
+                data = obj.data.decode('utf-8')
+                qr_type = obj.type
+                results.append(f"**Тип:** {qr_type}\n**Данные:** `{data}`")
+            return results
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"QR scan error: {e}")
+        return None
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
     """Команда /start"""
+    user_id = message.from_user.id
     user_name = message.from_user.first_name or "друг"
     
-    text = f"""🎬 **Добро пожаловать, {user_name}!**
+    # Добавляем пользователя в статистику
+    stats['total_users'].add(user_id)
+    
+    # Устанавливаем настройки по умолчанию
+    if user_id not in user_settings:
+        user_settings[user_id] = {'size': 300}
+    
+    welcome_text = f"""📱 **Добро пожаловать, {user_name}!**
 
-🚀 **Video Downloader Bot**
+🚀 **QR Code Generator Bot**
 
-**📱 Поддерживаемые сайты:**
-• 🔴 YouTube & Shorts
-• 🎵 TikTok 
-• 📸 Instagram
-• 🐦 Twitter/X
+**🔧 Возможности:**
+• 📱 Создание QR кодов из текста, ссылок
+• 🔍 Сканирование QR кодов из фото
+• ⚙️ Настройка размера (200x200 до 600x600)
+• 📊 Статистика использования
 
 **⚡ Как пользоваться:**
-1. Скопируйте ссылку на видео
-2. Отправьте мне ссылку
-3. Получите видео!
+1. Нажмите "Создать QR код"
+2. Отправьте текст или ссылку
+3. Получите готовый QR код!
 
 **👨‍💻 Разработчик:** @oxygw
 
-💡 *Отправьте ссылку для начала!*"""
+💡 *Выберите действие ниже:*"""
 
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    btn1 = types.InlineKeyboardButton("📋 Поддерживаемые сайты", callback_data="supported")
-    btn2 = types.InlineKeyboardButton("❓ Помощь", callback_data="help")
-    btn3 = types.InlineKeyboardButton("📊 Статистика", callback_data="stats")
-    markup.add(btn1, btn2)
-    markup.add(btn3)
-    
-    safe_send_message(message.chat.id, text, reply_markup=markup)
+    markup = create_main_menu()
+    bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown', reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     """Обработчик кнопок"""
     try:
-        markup = types.InlineKeyboardMarkup()
-        back_btn = types.InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")
-        markup.add(back_btn)
+        user_id = call.from_user.id
         
-        if call.data == "supported":
-            text = "📋 **Поддерживаемые платформы:**\n\n"
-            for domain, platform in PLATFORMS.items():
-                text += f"{platform} - `{domain}`\n"
-            text += "\n💡 *Отправьте ссылку с любой платформы!*"
+        if call.data == "create_qr":
+            text = """📱 **Создание QR кода**
+
+📝 **Отправьте мне:**
+• Любой текст
+• Ссылку на сайт
+• Номер телефона
+• Email адрес
+• Или что угодно еще!
+
+⚙️ **Текущий размер:** {}x{}
+
+💡 *Просто отправьте текст следующим сообщением*""".format(
+                user_settings.get(user_id, {}).get('size', 300),
+                user_settings.get(user_id, {}).get('size', 300)
+            )
             
-        elif call.data == "help":
-            text = """❓ **Инструкция**
+            markup = create_back_menu()
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
+                                 parse_mode='Markdown', reply_markup=markup)
+        
+        elif call.data == "scan_info":
+            text = """🔍 **Сканирование QR кода**
 
-**🔗 Форматы ссылок:**
-• `https://youtube.com/watch?v=...`
-• `https://youtu.be/...`
-• `https://tiktok.com/@user/video/...`
-• `https://instagram.com/p/...`
-• `https://twitter.com/.../status/...`
+📷 **Отправьте мне фото с QR кодом**
 
-**⚙️ Возможности:**
-✅ Автоопределение платформы
-✅ Качество до 480p
-✅ Размер до 40MB
-✅ Длительность до 10 минут
+✅ **Поддерживаемые форматы:**
+• QR Code
+• Data Matrix
+• Aztec Code
+• Code128, Code39
+• EAN13, UPC-A
 
-**💡 Советы:**
-• Используйте прямые ссылки
-• Если не работает - попробуйте другую ссылку
-• Бот работает 24/7
-
-**👨‍💻 Разработчик:** @oxygw"""
+💡 *Просто отправьте фото следующим сообщением*"""
             
+            markup = create_back_menu()
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
+                                 parse_mode='Markdown', reply_markup=markup)
+        
+        elif call.data == "settings":
+            text = """⚙️ **Настройки размера QR кода**
+
+📏 **Выберите размер:**"""
+            
+            markup = create_size_menu(user_id)
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
+                                 parse_mode='Markdown', reply_markup=markup)
+        
+        elif call.data.startswith("size_"):
+            size = int(call.data.replace("size_", ""))
+            if user_id not in user_settings:
+                user_settings[user_id] = {}
+            user_settings[user_id]['size'] = size
+            
+            text = f"""✅ **Размер установлен: {size}x{size}**
+
+📏 **Выберите размер:**"""
+            
+            markup = create_size_menu(user_id)
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
+                                 parse_mode='Markdown', reply_markup=markup)
+        
         elif call.data == "stats":
-            success_rate = (stats['success']/max(stats['total'], 1)*100) if stats['total'] > 0 else 0
-            text = f"""📊 **Статистика:**
+            total_users = len(stats['total_users'])
+            text = f"""📊 **Статистика бота**
 
-🎯 **Всего запросов:** {stats['total']}
-✅ **Успешно:** {stats['success']}
-❌ **Ошибок:** {stats['failed']}
-📈 **Успешность:** {success_rate:.1f}%
+👥 **Всего пользователей:** {total_users}
+📱 **QR кодов создано:** {stats['qr_generated']}
+🔍 **QR кодов отсканировано:** {stats['qr_scanned']}
+
+⚡ **Ваши настройки:**
+📏 Размер QR: {user_settings.get(user_id, {}).get('size', 300)}x{user_settings.get(user_id, {}).get('size', 300)}
 
 👨‍💻 **Разработчик:** @oxygw
 🚀 **Статус:** Online 24/7"""
             
+            markup = create_back_menu()
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
+                                 parse_mode='Markdown', reply_markup=markup)
+        
+        elif call.data == "help":
+            text = """❓ **Помощь по использованию**
+
+**📱 Создание QR кода:**
+1. Нажмите "Создать QR код"
+2. Отправьте любой текст
+3. Получите готовый QR код
+
+**🔍 Сканирование QR кода:**
+1. Нажмите "Сканировать QR"
+2. Отправьте фото с QR кодом
+3. Получите расшифровку
+
+**⚙️ Настройки:**
+• Размеры: 200x200, 300x300, 400x400, 600x600
+• Высокое качество изображений
+• Быстрая обработка
+
+**💡 Примеры использования:**
+• QR для Wi-Fi пароля
+• QR для ссылки на сайт
+• QR для контактной информации
+• QR для геолокации
+
+**🔧 Команды:**
+• /start - главное меню
+• /stats - статистика
+
+👨‍💻 **Разработчик:** @oxygw"""
+            
+            markup = create_back_menu()
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
+                                 parse_mode='Markdown', reply_markup=markup)
+        
         elif call.data == "menu":
             user_name = call.from_user.first_name or "друг"
-            text = f"""🎬 **Добро пожаловать, {user_name}!**
+            welcome_text = f"""📱 **Добро пожаловать, {user_name}!**
 
-🚀 **Video Downloader Bot**
+🚀 **QR Code Generator Bot**
 
-**📱 Поддерживаемые сайты:**
-• 🔴 YouTube & Shorts
-• 🎵 TikTok 
-• 📸 Instagram
-• 🐦 Twitter/X
+**🔧 Возможности:**
+• 📱 Создание QR кодов из текста, ссылок
+• 🔍 Сканирование QR кодов из фото
+• ⚙️ Настройка размера (200x200 до 600x600)
+• 📊 Статистика использования
 
 **⚡ Как пользоваться:**
-1. Скопируйте ссылку на видео
-2. Отправьте мне ссылку
-3. Получите видео!
+1. Нажмите "Создать QR код"
+2. Отправьте текст или ссылку
+3. Получите готовый QR код!
 
 **👨‍💻 Разработчик:** @oxygw
 
-💡 *Отправьте ссылку для начала!*"""
+💡 *Выберите действие ниже:*"""
             
-            markup = types.InlineKeyboardMarkup(row_width=2)
-            btn1 = types.InlineKeyboardButton("📋 Поддерживаемые сайты", callback_data="supported")
-            btn2 = types.InlineKeyboardButton("❓ Помощь", callback_data="help")
-            btn3 = types.InlineKeyboardButton("📊 Статистика", callback_data="stats")
-            markup.add(btn1, btn2)
-            markup.add(btn3)
-        
-        safe_edit_message(call.message.chat.id, call.message.message_id, text, reply_markup=markup)
+            markup = create_main_menu()
+            bot.edit_message_text(welcome_text, call.message.chat.id, call.message.message_id, 
+                                 parse_mode='Markdown', reply_markup=markup)
         
         try:
             bot.answer_callback_query(call.id)
@@ -254,202 +363,146 @@ def callback_handler(call):
     except Exception as e:
         logger.error(f"Callback error: {e}")
 
-def download_video(url, chat_id, message_id):
-    """Скачивание видео"""
-    temp_dir = None
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    """Обработчик фотографий"""
     try:
-        stats['total'] += 1
+        user_id = message.from_user.id
+        stats['total_users'].add(user_id)
         
-        # Статус: анализ
-        safe_edit_message(chat_id, message_id, "⏳ Анализирую ссылку...")
+        # Отправляем статус
+        status_msg = bot.send_message(message.chat.id, "🔍 Сканирую QR код...")
         
-        # Создаем временную папку
-        temp_dir = tempfile.mkdtemp()
+        # Получаем фото
+        file_info = bot.get_file(message.photo[-1].file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
         
-        # Настройки yt-dlp
-        ydl_opts = {
-            'format': 'worst[height<=480]/best[height<=480]/worst',
-            'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-            'noplaylist': True,
-            'no_warnings': True,
-            'ignoreerrors': False,
-            'geo_bypass': True,
-            'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X)',
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X)',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-            }
-        }
+        # Сканируем QR код
+        results = scan_qr_code(downloaded_file)
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Получаем информацию
-            safe_edit_message(chat_id, message_id, "📊 Получаю информацию...")
+        if results:
+            stats['qr_scanned'] += 1
             
-            try:
-                info = ydl.extract_info(url, download=False)
-            except Exception as e:
-                error_msg = str(e).lower()
-                if any(word in error_msg for word in ['private', 'forbidden', '403']):
-                    safe_edit_message(chat_id, message_id, "❌ Видео приватное или заблокировано")
-                elif any(word in error_msg for word in ['sign in', 'bot', 'confirm']):
-                    safe_edit_message(chat_id, message_id, "❌ Требуется авторизация. Попробуйте другую ссылку")
-                elif any(word in error_msg for word in ['unavailable', 'not found', 'deleted']):
-                    safe_edit_message(chat_id, message_id, "❌ Видео недоступно или удалено")
-                elif any(word in error_msg for word in ['geo', 'country', 'region']):
-                    safe_edit_message(chat_id, message_id, "❌ Видео недоступно в вашем регионе")
-                elif any(word in error_msg for word in ['too many', 'rate', 'limit']):
-                    safe_edit_message(chat_id, message_id, "❌ Слишком много запросов. Попробуйте через 5 минут")
-                else:
-                    safe_edit_message(chat_id, message_id, f"❌ Ошибка: {str(e)[:50]}...")
-                stats['failed'] += 1
-                return
+            response_text = "✅ **QR код успешно отсканирован!**\n\n"
+            for i, result in enumerate(results, 1):
+                response_text += f"**QR #{i}:**\n{result}\n\n"
             
-            title = info.get('title', 'Video')[:40]
-            duration = info.get('duration', 0)
-            platform = detect_platform(url)
+            response_text += "👨‍💻 **Разработчик:** @oxygw"
             
-            # Проверки
-            if duration and duration > 600:  # 10 минут
-                safe_edit_message(chat_id, message_id, "❌ Видео слишком длинное (максимум 10 минут)")
-                stats['failed'] += 1
-                return
+            # Удаляем статусное сообщение
+            bot.delete_message(message.chat.id, status_msg.message_id)
             
-            # Скачиваем
-            safe_edit_message(chat_id, message_id, f"⬇️ Скачиваю: {title}...")
-            
-            try:
-                ydl.download([url])
-            except Exception as e:
-                safe_edit_message(chat_id, message_id, f"❌ Ошибка скачивания: {str(e)[:50]}...")
-                stats['failed'] += 1
-                return
-            
-            # Ищем файл
-            video_files = []
-            for file in os.listdir(temp_dir):
-                if file.endswith(('.mp4', '.webm', '.mkv', '.avi', '.mov')):
-                    video_files.append(file)
-            
-            if not video_files:
-                safe_edit_message(chat_id, message_id, "❌ Файл не найден")
-                stats['failed'] += 1
-                return
-            
-            file_path = os.path.join(temp_dir, video_files[0])
-            file_size = os.path.getsize(file_path)
-            
-            if file_size > 40 * 1024 * 1024:  # 40MB
-                safe_edit_message(chat_id, message_id, "❌ Файл слишком большой (максимум 40MB)")
-                stats['failed'] += 1
-                return
-            
-            # Отправляем
-            safe_edit_message(chat_id, message_id, "📤 Отправляю...")
-            
-            try:
-                with open(file_path, 'rb') as video:
-                    caption = f"🎬 {title}\n\n{platform or '📱 Видео'}\n\n👨‍💻 @oxygw"
-                    
-                    bot.send_video(
-                        chat_id, 
-                        video, 
-                        caption=caption,
-                        supports_streaming=True,
-                        timeout=60
-                    )
-                
-                # Удаляем статусное сообщение
-                try:
-                    bot.delete_message(chat_id, message_id)
-                except:
-                    pass
-                    
-                stats['success'] += 1
-                
-            except Exception as e:
-                safe_edit_message(chat_id, message_id, "❌ Ошибка отправки видео")
-                stats['failed'] += 1
-                
-    except Exception as e:
-        logger.error(f"Download error: {e}")
-        safe_edit_message(chat_id, message_id, "❌ Произошла ошибка")
-        stats['failed'] += 1
+            markup = create_back_menu()
+            bot.send_message(message.chat.id, response_text, parse_mode='Markdown', reply_markup=markup)
+        else:
+            bot.edit_message_text("❌ **QR код не найден**\n\n"
+                                 "💡 Убедитесь что:\n"
+                                 "• QR код четко виден\n"
+                                 "• Фото хорошего качества\n"
+                                 "• QR код не поврежден\n\n"
+                                 "🔄 Попробуйте еще раз", 
+                                 message.chat.id, status_msg.message_id, parse_mode='Markdown')
     
-    finally:
-        # Очистка
-        if temp_dir and os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-            except:
-                pass
+    except Exception as e:
+        logger.error(f"Photo handler error: {e}")
+        bot.send_message(message.chat.id, "❌ Ошибка при обработке фото")
 
 @bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    """Обработчик сообщений"""
+def handle_text(message):
+    """Обработчик текстовых сообщений"""
     try:
-        text = message.text.strip() if message.text else ""
+        user_id = message.from_user.id
+        text = message.text.strip()
         
-        if is_valid_url(text):
-            platform = detect_platform(text)
+        # Добавляем пользователя в статистику
+        stats['total_users'].add(user_id)
+        
+        if not text:
+            markup = create_back_menu()
+            bot.send_message(message.chat.id, 
+                           "❓ **Отправьте текст для создания QR кода**\n\n"
+                           "📱 Или используйте кнопки меню ниже", 
+                           parse_mode='Markdown', reply_markup=markup)
+            return
+        
+        # Отправляем статус
+        status_msg = bot.send_message(message.chat.id, "📱 Создаю QR код...")
+        
+        # Получаем размер из настроек пользователя
+        size = user_settings.get(user_id, {}).get('size', 300)
+        
+        # Генерируем QR код
+        qr_image = generate_qr_code(text, size)
+        
+        if qr_image:
+            stats['qr_generated'] += 1
             
-            if platform:
-                msg_text = f"""✅ **Ссылка распознана!**
-
-🎯 **Платформа:** {platform}
-🔗 **URL:** `{text[:40]}...`
-
-⏳ Начинаю обработку..."""
-                
-                msg = safe_send_message(message.chat.id, msg_text)
-                if msg:
-                    # Запускаем скачивание в потоке
-                    thread = Thread(target=download_video, args=(text, message.chat.id, msg.message_id))
-                    thread.daemon = True
-                    thread.start()
+            # Определяем тип контента
+            if text.startswith(('http://', 'https://')):
+                content_type = "🔗 Ссылка"
+            elif text.startswith(('tel:', '+', '8')) or text.replace(' ', '').replace('-', '').replace('(', '').replace(')', '').isdigit():
+                content_type = "📞 Телефон"
+            elif '@' in text and '.' in text:
+                content_type = "📧 Email"
             else:
-                markup = types.InlineKeyboardMarkup()
-                back_btn = types.InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")
-                markup.add(back_btn)
-                
-                safe_send_message(message.chat.id, 
-                               "❌ **Платформа не поддерживается**\n\n"
-                               "📋 Нажмите кнопку ниже для списка сайтов\n\n"
-                               "👨‍💻 @oxygw",
-                               reply_markup=markup)
-        else:
-            markup = types.InlineKeyboardMarkup()
-            back_btn = types.InlineKeyboardButton("🔙 Главное меню", callback_data="menu")
-            markup.add(back_btn)
+                content_type = "📝 Текст"
             
-            safe_send_message(message.chat.id,
-                           "❓ **Отправьте ссылку на видео**\n\n"
-                           "📋 **Поддержка:**\n"
-                           "• 🔴 YouTube\n"
-                           "• 🎵 TikTok\n"
-                           "• 📸 Instagram\n"
-                           "• 🐦 Twitter/X\n\n"
-                           "👨‍💻 **Разработчик:** @oxygw",
-                           reply_markup=markup)
+            caption = f"""✅ **QR код создан!**
+
+{content_type}: `{text[:100]}{'...' if len(text) > 100 else ''}`
+📏 **Размер:** {size}x{size}
+
+👨‍💻 **Разработчик:** @oxygw"""
+            
+            # Удаляем статусное сообщение
+            bot.delete_message(message.chat.id, status_msg.message_id)
+            
+            # Отправляем QR код
+            markup = create_back_menu()
+            bot.send_photo(message.chat.id, qr_image, caption=caption, 
+                          parse_mode='Markdown', reply_markup=markup)
+        else:
+            bot.edit_message_text("❌ Ошибка создания QR кода", 
+                                 message.chat.id, status_msg.message_id)
     
     except Exception as e:
-        logger.error(f"Message handler error: {e}")
+        logger.error(f"Text handler error: {e}")
+        bot.send_message(message.chat.id, "❌ Ошибка при создании QR кода")
+
+@bot.message_handler(commands=['stats'])
+def stats_command(message):
+    """Команда статистики"""
+    user_id = message.from_user.id
+    total_users = len(stats['total_users'])
+    
+    text = f"""📊 **Статистика бота**
+
+👥 **Всего пользователей:** {total_users}
+📱 **QR кодов создано:** {stats['qr_generated']}
+🔍 **QR кодов отсканировано:** {stats['qr_scanned']}
+
+⚡ **Ваши настройки:**
+📏 Размер QR: {user_settings.get(user_id, {}).get('size', 300)}x{user_settings.get(user_id, {}).get('size', 300)}
+
+👨‍💻 **Разработчик:** @oxygw"""
+    
+    markup = create_back_menu()
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
 
 if __name__ == "__main__":
     try:
-        # HTTP сервер
+        # HTTP сервер для Render
         http_thread = Thread(target=keep_alive)
         http_thread.daemon = True
         http_thread.start()
         
         # Запуск бота
-        logger.info("🎬 Video Downloader Bot starting...")
+        logger.info("📱 QR Code Generator Bot starting...")
         logger.info("👨‍💻 Developer: @oxygw")
         logger.info("🚀 Bot ready!")
         
-        # Polling с увеличенными интервалами
-        bot.polling(none_stop=True, interval=3, timeout=60)
+        bot.polling(none_stop=True, interval=1, timeout=60)
         
     except Exception as e:
         logger.error(f"Critical error: {e}")
-        time.sleep(15)
-        os.execv(__file__, [__file__])
+        time.sleep(10)
