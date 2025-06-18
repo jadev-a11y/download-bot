@@ -39,7 +39,7 @@ class HealthHandler(BaseHTTPRequestHandler):
                 <p>🚀 Deployed on Render</p>
                 <p>👨‍💻 Developer: @oxygw</p>
                 <p>⚡ Status: Online 24/7</p>
-                <p>📱 Supports: TikTok, Instagram, YouTube, Pinterest</p>
+                <p>📱 Supports: TikTok, Instagram, YouTube, Twitter</p>
             </body>
             </html>
             """
@@ -85,7 +85,7 @@ stats = {
     'failed_downloads': 0
 }
 
-# Поддерживаемые платформы (убираем проблемные)
+# Поддерживаемые платформы (только стабильные)
 SUPPORTED_PLATFORMS = {
     'youtube.com': '🔴 YouTube',
     'youtu.be': '🔴 YouTube',
@@ -121,11 +121,17 @@ def create_main_menu():
     btn1 = types.InlineKeyboardButton("📋 Поддерживаемые сайты", callback_data="supported")
     btn2 = types.InlineKeyboardButton("❓ Помощь", callback_data="help")
     btn3 = types.InlineKeyboardButton("📊 Статистика", callback_data="stats")
-    btn4 = types.InlineKeyboardButton("👨‍💻 Разработчик", callback_data="developer")
     
     markup.add(btn1, btn2)
-    markup.add(btn3, btn4)
+    markup.add(btn3)
     
+    return markup
+
+def create_back_menu():
+    """Создает кнопку Назад в меню"""
+    markup = types.InlineKeyboardMarkup()
+    back_btn = types.InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_menu")
+    markup.add(back_btn)
     return markup
 
 @bot.message_handler(commands=['start'])
@@ -169,7 +175,6 @@ def help_command(message):
 • `https://vm.tiktok.com/...`
 • `https://instagram.com/p/...` (посты)
 • `https://instagram.com/reel/...` (reels)
-• `https://pinterest.com/pin/...`
 • `https://twitter.com/.../status/...`
 • `https://x.com/.../status/...`
 
@@ -192,7 +197,8 @@ def help_command(message):
 
 **👨‍💻 Разработчик:** @oxygw"""
 
-    bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
+    markup = create_back_menu()
+    bot.send_message(message.chat.id, help_text, parse_mode='Markdown', reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
@@ -206,67 +212,106 @@ def callback_handler(call):
             platforms_text += f"\n🎯 **Всего платформ:** {len(SUPPORTED_PLATFORMS)}"
             platforms_text += "\n💡 *Просто отправьте ссылку с любой из этих платформ!*"
             
-            bot.edit_message_text(platforms_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+            markup = create_back_menu()
+            bot.edit_message_text(platforms_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=markup)
         
         elif call.data == "help":
-            help_command(call.message)
+            help_text = """❓ **Подробная инструкция**
+
+**🔗 Поддерживаемые форматы ссылок:**
+• `https://youtube.com/watch?v=...`
+• `https://youtu.be/...`  
+• `https://youtube.com/shorts/...`
+• `https://tiktok.com/@user/video/...`
+• `https://vm.tiktok.com/...`
+• `https://instagram.com/p/...` (посты)
+• `https://instagram.com/reel/...` (reels)
+• `https://twitter.com/.../status/...`
+• `https://x.com/.../status/...`
+
+**⚙️ Возможности:**
+✅ Автоматическое определение платформы
+✅ Скачивание в максимальном качестве (до 720p)
+✅ Поддержка коротких и длинных видео
+✅ Обработка ошибок и уведомления
+
+**🚫 Ограничения:**
+• Максимальный размер: 50MB (ограничение Telegram)
+• Длительность: до 15 минут
+• Не работает с приватными аккаунтами
+• Некоторые видео могут быть защищены
+
+**💡 Советы:**
+• Используйте прямые ссылки на видео
+• Если видео не скачивается - попробуйте другую ссылку
+• Бот работает 24/7 без перерывов!
+
+**👨‍💻 Разработчик:** @oxygw"""
+            
+            markup = create_back_menu()
+            bot.edit_message_text(help_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=markup)
         
         elif call.data == "stats":
+            success_rate = (stats['successful_downloads']/max(stats['total_downloads'], 1)*100)
             stats_text = f"""📊 **Статистика бота:**
 
 🎯 **Всего запросов:** {stats['total_downloads']}
 ✅ **Успешно скачано:** {stats['successful_downloads']}
 ❌ **Ошибок:** {stats['failed_downloads']}
-📈 **Успешность:** {(stats['successful_downloads']/max(stats['total_downloads'], 1)*100):.1f}%
+📈 **Успешность:** {success_rate:.1f}%
 
 ⚡ **Среднее время:** 15-45 секунд
 🔥 **Популярные платформы:**
 1. 🔴 YouTube (40%)
 2. 🎵 TikTok (35%) 
 3. 📸 Instagram (15%)
-4. 📌 Pinterest (10%)
+4. 🐦 Twitter (10%)
 
 👨‍💻 **Разработчик:** @oxygw
 🚀 **Статус:** Online 24/7
 
 *Статистика обновляется в реальном времени*"""
             
-            bot.edit_message_text(stats_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+            markup = create_back_menu()
+            bot.edit_message_text(stats_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=markup)
         
-        elif call.data == "developer":
-            dev_text = """👨‍💻 **О разработчике**
+        elif call.data == "back_to_menu":
+            user_name = call.from_user.first_name or "друг"
+            welcome_text = f"""🎬 **Добро пожаловать, {user_name}!**
 
-**Telegram:** @oxygw
+🚀 **Video Downloader Bot** - скачиваю видео с популярных платформ!
 
-**🚀 Специализация:**
-• Telegram боты (Python)
-• Веб-приложения (React, Node.js)
-• Автоматизация и парсинг
-• UI/UX дизайн
+**📱 Поддерживаемые сайты:**
+• 🔴 YouTube & YouTube Shorts
+• 🎵 TikTok 
+• 📸 Instagram (Reels & Videos)
+• 🐦 Twitter/X
+• 📘 Facebook
 
-**💼 Услуги:**
-✅ Разработка Telegram ботов
-✅ Веб-сайты под ключ
-✅ Автоматизация бизнес-процессов
-✅ Консультации по технологиям
+**⚡ Как пользоваться:**
+1. Скопируйте ссылку на видео
+2. Отправьте мне ссылку
+3. Получите видео в хорошем качестве!
 
-**📧 Контакты:**
-• Telegram: @oxygw
-• Email: orbitskill@gmail.com
-• GitHub: github.com/jadev-a11y
+**👨‍💻 Разработчик:** @oxygw
 
-💡 *Всегда открыт для интересных проектов!*"""
-            
-            bot.edit_message_text(dev_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+💡 *Просто отправьте ссылку и начнем!*"""
+
+            markup = create_main_menu()
+            bot.edit_message_text(welcome_text, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=markup)
         
         bot.answer_callback_query(call.id)
     except Exception as e:
         logger.error(f"Callback handler error: {e}")
-        bot.answer_callback_query(call.id, "Произошла ошибка")
+        try:
+            bot.answer_callback_query(call.id, "Произошла ошибка")
+        except:
+            pass
 
 def download_video(url, chat_id, message_id=None):
     """Функция для скачивания видео"""
     temp_file = None
+    temp_dir = None
     try:
         stats['total_downloads'] += 1
         
@@ -279,30 +324,26 @@ def download_video(url, chat_id, message_id=None):
         # Создаем временную папку
         temp_dir = tempfile.mkdtemp()
         
-        # Настройки для yt-dlp
+        # Улучшенные настройки для yt-dlp
         ydl_opts = {
-            'format': 'best[height<=720][filesize<50M]/best[filesize<50M]/best',
+            'format': 'best[height<=480][filesize<45M]/worst[filesize<45M]/best',
             'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
             'noplaylist': True,
             'extract_flat': False,
             'no_warnings': True,
             'ignoreerrors': False,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'geo_bypass': True,
+            'age_limit': 99,
+            'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1',
             'referer': 'https://www.google.com/',
-            'extractor_args': {
-                'youtube': {
-                    'skip': ['dash', 'hls'],
-                    'player_skip': ['js', 'configs']
-                }
-            },
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-us,en;q=0.5',
                 'Accept-Encoding': 'gzip,deflate',
-                'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
-                'Keep-Alive': '300',
+                'DNT': '1',
                 'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
             }
         }
         
@@ -314,18 +355,20 @@ def download_video(url, chat_id, message_id=None):
                 info = ydl.extract_info(url, download=False)
             except Exception as e:
                 error_msg = str(e).lower()
-                if "private" in error_msg or "forbidden" in error_msg:
+                if "private" in error_msg or "forbidden" in error_msg or "403" in error_msg:
                     bot.edit_message_text("❌ Видео приватное или заблокировано", chat_id, processing_msg.message_id)
-                elif "sign in" in error_msg or "bot" in error_msg:
+                elif "sign in" in error_msg or "bot" in error_msg or "confirm" in error_msg:
                     bot.edit_message_text("❌ Платформа требует авторизацию. Попробуйте другую ссылку", chat_id, processing_msg.message_id)
-                elif "unavailable" in error_msg or "not found" in error_msg:
+                elif "unavailable" in error_msg or "not found" in error_msg or "deleted" in error_msg:
                     bot.edit_message_text("❌ Видео недоступно или удалено", chat_id, processing_msg.message_id)
-                elif "geo" in error_msg or "country" in error_msg:
+                elif "geo" in error_msg or "country" in error_msg or "region" in error_msg:
                     bot.edit_message_text("❌ Видео недоступно в вашем регионе", chat_id, processing_msg.message_id)
-                elif "age" in error_msg:
+                elif "age" in error_msg or "restricted" in error_msg:
                     bot.edit_message_text("❌ Видео имеет возрастные ограничения", chat_id, processing_msg.message_id)
+                elif "too many" in error_msg or "rate" in error_msg:
+                    bot.edit_message_text("❌ Слишком много запросов. Попробуйте через несколько минут", chat_id, processing_msg.message_id)
                 else:
-                    bot.edit_message_text(f"❌ Ошибка: {str(e)[:80]}...", chat_id, processing_msg.message_id)
+                    bot.edit_message_text(f"❌ Ошибка: {str(e)[:60]}...", chat_id, processing_msg.message_id)
                 stats['failed_downloads'] += 1
                 return
             
@@ -345,14 +388,17 @@ def download_video(url, chat_id, message_id=None):
             try:
                 ydl.download([url])
             except Exception as e:
-                bot.edit_message_text(f"❌ Ошибка скачивания: {str(e)[:100]}...", chat_id, processing_msg.message_id)
+                if "too large" in str(e).lower() or "size" in str(e).lower():
+                    bot.edit_message_text("❌ Файл слишком большой (максимум 45MB)", chat_id, processing_msg.message_id)
+                else:
+                    bot.edit_message_text(f"❌ Ошибка скачивания: {str(e)[:60]}...", chat_id, processing_msg.message_id)
                 stats['failed_downloads'] += 1
                 return
             
             # Находим скачанный файл
             downloaded_files = []
             for file in os.listdir(temp_dir):
-                if file.endswith(('.mp4', '.webm', '.mkv', '.avi', '.mov')):
+                if file.endswith(('.mp4', '.webm', '.mkv', '.avi', '.mov', '.m4v')):
                     downloaded_files.append(file)
             
             if not downloaded_files:
@@ -364,29 +410,37 @@ def download_video(url, chat_id, message_id=None):
             
             # Проверяем размер файла
             file_size = os.path.getsize(file_path)
-            if file_size > 50 * 1024 * 1024:  # 50MB
-                bot.edit_message_text("❌ Файл слишком большой (максимум 50MB)", chat_id, processing_msg.message_id)
+            if file_size > 45 * 1024 * 1024:  # 45MB
+                bot.edit_message_text("❌ Файл слишком большой (максимум 45MB)", chat_id, processing_msg.message_id)
                 stats['failed_downloads'] += 1
                 return
             
             # Отправляем видео
             bot.edit_message_text("📤 Отправляю видео...", chat_id, processing_msg.message_id)
             
-            with open(file_path, 'rb') as video:
-                caption = f"🎬 **{title}**\n\n{platform if platform else '📱 Видео'}\n\n👨‍💻 Разработчик: @oxygw"
+            try:
+                with open(file_path, 'rb') as video:
+                    caption = f"🎬 **{title}**\n\n{platform if platform else '📱 Видео'}\n\n👨‍💻 @oxygw"
+                    
+                    bot.send_video(
+                        chat_id, 
+                        video, 
+                        caption=caption,
+                        parse_mode='Markdown',
+                        supports_streaming=True,
+                        timeout=120
+                    )
                 
-                bot.send_video(
-                    chat_id, 
-                    video, 
-                    caption=caption,
-                    parse_mode='Markdown',
-                    supports_streaming=True,
-                    timeout=60
-                )
-            
-            # Удаляем сообщение о процессе
-            bot.delete_message(chat_id, processing_msg.message_id)
-            stats['successful_downloads'] += 1
+                # Удаляем сообщение о процессе
+                bot.delete_message(chat_id, processing_msg.message_id)
+                stats['successful_downloads'] += 1
+                
+            except Exception as e:
+                if "too large" in str(e).lower():
+                    bot.edit_message_text("❌ Файл слишком большой для отправки", chat_id, processing_msg.message_id)
+                else:
+                    bot.edit_message_text("❌ Ошибка отправки видео", chat_id, processing_msg.message_id)
+                stats['failed_downloads'] += 1
             
     except Exception as e:
         logger.error(f"Error downloading video: {e}")
@@ -404,7 +458,7 @@ def download_video(url, chat_id, message_id=None):
         try:
             if temp_file and os.path.exists(temp_file):
                 os.remove(temp_file)
-            if 'temp_dir' in locals():
+            if temp_dir and os.path.exists(temp_dir):
                 import shutil
                 shutil.rmtree(temp_dir, ignore_errors=True)
         except:
@@ -438,11 +492,12 @@ def handle_message(message):
                 
             else:
                 # Неподдерживаемая платформа
+                markup = create_back_menu()
                 bot.send_message(message.chat.id, 
                                "❌ **Платформа не поддерживается**\n\n"
                                "📋 Нажмите /help для списка поддерживаемых сайтов\n\n"
                                "👨‍💻 Разработчик: @oxygw",
-                               parse_mode='Markdown')
+                               parse_mode='Markdown', reply_markup=markup)
         else:
             # Не URL
             suggestions_text = """❓ **Отправьте ссылку на видео**
@@ -451,7 +506,6 @@ def handle_message(message):
 • 🔴 YouTube
 • 🎵 TikTok  
 • 📸 Instagram
-• 📌 Pinterest
 • 🐦 Twitter/X
 • 📘 Facebook
 
@@ -461,11 +515,15 @@ def handle_message(message):
 
 👨‍💻 **Разработчик:** @oxygw"""
             
-            bot.send_message(message.chat.id, suggestions_text, parse_mode='Markdown')
+            markup = create_back_menu()
+            bot.send_message(message.chat.id, suggestions_text, parse_mode='Markdown', reply_markup=markup)
     
     except Exception as e:
         logger.error(f"Message handler error: {e}")
-        bot.send_message(message.chat.id, "❌ Произошла ошибка при обработке сообщения")
+        try:
+            bot.send_message(message.chat.id, "❌ Произошла ошибка при обработке сообщения")
+        except:
+            pass
 
 if __name__ == "__main__":
     try:
@@ -477,13 +535,12 @@ if __name__ == "__main__":
         # Запускаем Telegram бота
         logger.info("🎬 Video Downloader Bot is starting...")
         logger.info("👨‍💻 Developer: @oxygw")
-        logger.info("📱 Supported platforms: YouTube, TikTok, Instagram, Pinterest, Twitter, Facebook")
+        logger.info("📱 Supported platforms: YouTube, TikTok, Instagram, Twitter, Facebook")
         logger.info("🚀 Bot is ready to download videos!")
         
-        bot.polling(none_stop=True, interval=1, timeout=60)
+        bot.polling(none_stop=True, interval=2, timeout=30)
         
     except Exception as e:
         logger.error(f"Critical error: {e}")
-        time.sleep(5)
-        # Перезапуск бота в случае ошибки
-        os.execv(__file__, [__file__])
+        time.sleep(10)
+        # Перезапуск бота в случае
